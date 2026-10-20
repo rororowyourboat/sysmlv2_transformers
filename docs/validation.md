@@ -47,3 +47,13 @@ QKV source inspection, shape inspection, attribution links and mobile page width
 The multi-head desktop screenshot was inspected. The existing guided walkthrough
 checks were rerun after both layouts were added and passed, including the
 no-WebGL fallback and explicit compact-mode flows.
+
+## Navigation refinement
+
+Added collision-suppressed screen labels, hover identification, per-head names and
+filtering, overview block labels, selected-tensor status and framing, and direct
+whole-model/block navigation. Eight Node tests passed, including the dense-label
+placement check. Chromium checked nonoverlapping visible labels, block selection
+from overview, head filtering, selected-tensor framing/status, label visibility
+and mobile width. Desktop overview and focused-selection screenshots were
+inspected. These changes remain uncommitted until requested.

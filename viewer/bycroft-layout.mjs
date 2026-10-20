@@ -6,7 +6,7 @@ export function buildBycroftLayout(settings,T){
  // Limit vocabulary geometry, never the dimensions retained for inspection.
  const shownVocab=Math.min(a.vocabulary,2*D);
  const layout=genGptModelLayout({B:1,T,C:D,vocabSize:shownVocab,nHeads:a.headCount,A:D/a.headCount,nBlocks:a.blockCount});
- const meta=new Map();
+ const meta=new Map(),headIndices=new Map();
  const assign=(c,type,path,phase,layer=null,shape)=>meta.set(c,{type,path,phase,layer,shape});
  const group=(cs,type,path,phase,l)=>cs.forEach(c=>assign(c,type,path,phase,l));
  assign(layout.idxObj,'TokenSource','tokens','embedding',null,[T]);
@@ -19,7 +19,7 @@ export function buildBycroftLayout(settings,T){
   group(b.ln1.cubes,'LayerNorm',p+'.norm1','norm',l);group(b.ln2.cubes,'LayerNorm',p+'.norm2','norm',l);
   for(const [h,head] of b.heads.entries()){
    group(head.cubes,'QKVProjection',p+'.attention.qkv','attention',l);
-   for(const c of head.cubes)meta.get(c).head=h;
+   for(const c of head.cubes)headIndices.set(c,h);
    assign(head.attnMtx,'QKProduct',p+'.attention.scores','attention',l,[T,T]);
    for(const c of [head.attnMtxAgg1,head.attnMtxAgg2,head.attnMtxSm])assign(c,'Softmax',p+'.attention.probabilities','attention',l,[T,T]);
    assign(head.vOutBlock,'WeightedValues',p+'.attention.mix','attention',l,[T,D/a.headCount]);
@@ -37,9 +37,9 @@ export function buildBycroftLayout(settings,T){
  const blocks=layout.cubes.filter(c=>c.opacity>0).map(c=>{
   const m=meta.get(c);if(!m)throw Error('Unmapped Bycroft component');
   const weight=c.t==='w';const shape=m.shape||(weight?(c.cx===1?[c.cy]:c.cy===1?[c.cx]:[c.cy,c.cx]):[c.cx,c.cy]);
-  return {id:'bycroft.'+c.idx,label:c.name||'Reduction intermediate',kind:weight?'weight':'activation',phase:m.phase,layer:m.layer,overview:true,
+  return {id:'bycroft.'+c.idx,label:(c.name||'Reduction intermediate')+(headIndices.has(c)?` · head ${headIndices.get(c)+1}`:''),kind:weight?'weight':'activation',phase:m.phase,layer:m.layer,overview:true,
    pos:[(c.x+c.dx/2)*scale,-(c.y+c.dy/2)*scale,(c.z+c.dz/2)*scale],size:[c.dx*scale,c.dy*scale,c.dz*scale],
-   data:{shape},type:m.type,path:m.path,
+   data:{shape},type:m.type,path:m.path,head:headIndices.get(c)??null,
    cells:[c.cx,c.cy,c.cz],note:'Bycroft layout: logical operation or parameter slice mapped to this SysML component. Per-head Q/K/V matrices are slices of the combined QKV projection. Position geometry shows the first T positions; vocabulary geometry may be compressed. No values loaded.',upstream:c};
  });
  const byCube=new Map(blocks.map(b=>[b.upstream,b.id]));const edges=[];

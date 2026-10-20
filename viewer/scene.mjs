@@ -1,5 +1,6 @@
 // SysML scene controller using the pinned Bycroft block renderer.
 import { Mat4f, Vec3 } from './vendor/bycroft-math.mjs';
+import {placeLabels} from './label-layout.mjs';
 import {BycroftRenderer} from './bycroft-renderer.mjs';
 
 function shader(gl, type, source) {
@@ -41,7 +42,7 @@ export class TensorScene {
       canvas.setPointerCapture(event.pointerId);
     }, { signal });
     canvas.addEventListener('pointermove', event => {
-      if (!this.drag) return;
+      if (!this.drag) {const hit=this.hitTest(event);if(this.hovered!==hit?.id){this.hovered=hit?.id;canvas.style.cursor=hit?'pointer':'grab';this.invalidate();}return;}
       const dx = event.clientX - this.drag.x, dy = event.clientY - this.drag.y;
       if (event.shiftKey || event.button === 1) {
         this.center[0] -= dx * .04 / this.zoom; this.center[1] += dy * .04 / this.zoom;
@@ -52,6 +53,8 @@ export class TensorScene {
       if (this.drag && Math.hypot(event.clientX - this.drag.startX, event.clientY - this.drag.startY) < 5) this.pick(event);
       this.drag = null;
     }, { signal });
+    canvas.addEventListener('pointerleave',()=>{this.hovered=null;this.invalidate();},{signal});
+    canvas.addEventListener('dblclick',event=>{const hit=this.hitTest(event);if(hit)this.focus([hit.id]);},{signal});
     canvas.addEventListener('pointercancel', () => { this.drag = null; }, { signal });
     canvas.addEventListener('wheel', event => {
       event.preventDefault(); this.zoom = Math.max(.08, Math.min(5, this.zoom * Math.exp(-event.deltaY * .001))); this.invalidate();
@@ -59,17 +62,18 @@ export class TensorScene {
     canvas.addEventListener('webglcontextlost', event => {
       event.preventDefault(); this.onContextLost?.();
     }, { signal });
-    this.observer = new ResizeObserver(() => this.invalidate()); this.observer.observe(canvas);
+    this.observer = new ResizeObserver(() => {this.measureLabels=true;this.invalidate();}); this.observer.observe(canvas);
   }
   setData(blocks) {
-    this.blocks = blocks; this.labels.replaceChildren();
+    this.blocks = blocks; this.overviewMode=null; this.labels.replaceChildren();
     for (const b of blocks) {
       const label = document.createElement('button'); label.className = `tensor-label ${b.kind}`;
       label.textContent = /^attention\.\d$/.test(b.id) ? b.label.replace('attention', 'attn') : b.label;
       label.title = `${b.label} · [${b.data.shape.join(' × ')}]`;
-      label.onclick = () => this.onSelect(b.id); label.dataset.tensor = b.id;
+      label.onclick = () => this.onSelect(b.id);label.ondblclick=()=>this.focus([b.id]); label.dataset.tensor = b.id;
       b.labelElement = label; this.labels.append(label);
     }
+    this.measureLabels=true;
     this.invalidate();
   }
   visible(block) { return this.visibleKinds.has(block.kind) && (!this.filter || this.filter(block)); }
@@ -101,21 +105,34 @@ export class TensorScene {
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); gl.enable(gl.DEPTH_TEST);
     if (this.showLines) this.renderLines();
     this.renderer.render(this.blocks.filter(b=>this.visible(b)),this.vp,eye,this.selected,this.related);
-    for (const b of this.blocks) {
-      b.labelElement.hidden = !this.visible(b) || !this.showLabels;
-      if (!this.visible(b)) continue;
-      const selected = b.id === this.selected; b.labelElement.classList.toggle('selected', selected);
-      const related = this.related?.has(b.id); b.labelElement.classList.toggle('related', Boolean(related));
-      const p = this.project([b.pos[0], b.pos[1] + b.size[1] / 2 + .35, b.pos[2] + (b.size[2]??.16)/2 + .12]);
-      b.labelElement.style.left = `${p[0]}px`; b.labelElement.style.top = `${p[1]}px`;
+    if(this.measureLabels&&this.labels.getClientRects().length){
+      for(const b of this.blocks){b.labelElement.hidden=false;b.labelElement.style.visibility='hidden';}
+      for(const b of this.blocks)b.labelSize=[b.labelElement.offsetWidth,b.labelElement.offsetHeight];
+      for(const b of this.blocks){b.labelElement.hidden=true;b.labelElement.style.visibility='';}
+      this.measureLabels=false;
     }
+    const candidates=[];
+    for (const b of this.blocks) {
+      const label=b.labelElement;label.hidden=true;
+      if(!this.visible(b)||(!this.showLabels&&b.id!==this.hovered&&b.id!==this.selected))continue;
+      const selected=b.id===this.selected,hovered=b.id===this.hovered;
+      if(this.overviewMode&&b.layer!=null&&!b.path.endsWith('.residual2')&&!selected&&!hovered)continue;
+      label.classList.toggle('selected',selected);label.classList.toggle('related',Boolean(this.related?.has(b.id)));
+      const p=this.project([b.pos[0],b.pos[1]+b.size[1]/2+.35,b.pos[2]+(b.size[2]??.16)/2+.12]);
+      const [w,h]=b.labelSize||[0,0];if(!w||!h)continue;
+      candidates.push({id:b.id,label,x:Math.max(0,Math.min(canvas.clientWidth-w,p[0]-w/2)),y:p[1]-h,w,h,depth:p[2],priority:hovered?300:selected?200:b.head!=null?5:b.label.includes('Residual')?30:b.kind==='activation'?20:10});
+    }
+    const placed=placeLabels(candidates,canvas.clientWidth,canvas.clientHeight);
+    for(const p of placed){p.label.hidden=false;p.label.style.left=`${p.x+p.w/2}px`;p.label.style.top=`${p.y+p.h}px`;}
+    canvas.dataset.labelCount=String(placed.length);
     canvas.dataset.renderState = 'ready';
   }
   project(point) {
     const p = this.vp.project(point);
     return [(p[0] + 1) * this.canvas.clientWidth / 2, (1 - p[1]) * this.canvas.clientHeight / 2, p[2]];
   }
-  pick(event) {
+  hitTest(event) {
+    if(!this.vp)return null;
     const rect = this.canvas.getBoundingClientRect(), px = event.clientX - rect.left, py = event.clientY - rect.top;
     const candidates = [];
     for (const b of this.blocks.filter(block => this.visible(block))) {
@@ -130,13 +147,17 @@ export class TensorScene {
       }
     }
     candidates.sort((a, b) => a.depth - b.depth);
-    if (candidates.length) this.onSelect(candidates[0].id, candidates[0]);
+    return candidates[0]||null;
+  }
+  pick(event) {
+    const hit=this.hitTest(event);if(hit)this.onSelect(hit.id,hit);
   }
   renderLines() {
     const gl = this.gl, vertices = [], map = new Map(this.blocks.filter(b => this.visible(b)).map(b => [b.id,b]));
     const edges = this.edges || [];
     for (const [from, to] of edges) {
       const a = map.get(from), b = map.get(to); if (!a || !b) continue;
+      if(this.limitLines&&![this.selected,this.hovered].some(id=>id===from||id===to))continue;
       const p = [a.pos[0], a.pos[1]-a.size[1]/2, a.pos[2]], q = [b.pos[0], b.pos[1]+b.size[1]/2,b.pos[2]];
       vertices.push(...p,...q);
     }

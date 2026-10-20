@@ -35,7 +35,10 @@ residuals and output, or select a decoder block. Orbit, pan and zoom the canvas;
 use **Fit model**, **Focus stage** or **Tensor list**. **Bycroft layout** switches
 to the upstream per-head spatial arrangement; **Compact layout** returns to the
 flow-oriented arrangement. Both use the actual upstream block renderer. Toggle parameter slabs,
-representations, flows and labels. Clicking a tensor exposes its exact dimensions
+representations, flows and labels. Labels suppress overlaps; hover to identify
+a tensor. Choose a **Block** or **Isolate block** to narrow the view, and use
+the **Head** selector in Bycroft layout. **Whole model** restores the overview.
+Double-click a tensor or use **Focus selected** to frame it. Clicking a tensor exposes its exact dimensions
 and **SysML source** opens the corresponding definition and modeled flows.
 The sequence length T is illustrative; no weights or activations are loaded.
 

@@ -14,7 +14,7 @@ test('retained upstream renderer sources match pinned provenance',async()=>{
 test('Bycroft per-head layout keeps SysML dimensions, source links and geometry distinct',()=>{
  for(const entry of bundle.catalog){
   const compact=buildTensors(bundle,entry,6),a=compact.settings,l=buildBycroftLayout(a,6);
-  const q=l.blocks.filter(b=>b.layer===0&&b.label==='Q Weights');assert.equal(q.length,a.headCount);
+  const q=l.blocks.filter(b=>b.layer===0&&b.label.startsWith('Q Weights'));assert.equal(q.length,a.headCount);
   assert.equal(new Set(q.map(b=>b.pos[2])).size,a.headCount);
   for(const b of q){assert.deepEqual(b.data.shape,[a.modelWidth/a.headCount,a.modelWidth]);assert.equal(b.type,'QKVProjection');assert.equal(b.path,'decoder.layers[1].attention.qkv');}
   assert.deepEqual(l.blocks.find(b=>b.label==='Position Embed').data.shape,[a.contextLength,a.modelWidth]);
