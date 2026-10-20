@@ -1,0 +1,885 @@
+{
+  "format": 1,
+  "catalog": [
+    {
+      "id": "gpt2-small",
+      "name": "GPT-2 Small",
+      "definition": "GPT2Small",
+      "file": "models/gpt2.sysml",
+      "scope": "Released architecture configuration; no weights loaded.",
+      "sources": [
+        "https://github.com/openai/gpt-2/blob/c2dae27c1029770cea40978813f17a5fd545b883/src/model.py",
+        "https://huggingface.co/openai-community/gpt2/blob/607a30d783dfa663caf39e06633721c8d4cfcd7e/config.json"
+      ]
+    },
+    {
+      "id": "nanogpt-default",
+      "name": "nanoGPT · default",
+      "definition": "NanoGPTDefault",
+      "file": "models/nanogpt.sysml",
+      "scope": "GPTConfig defaults from model.py, distinct from training-script overrides.",
+      "sources": [
+        "https://github.com/karpathy/nanoGPT/blob/f08abb45bd2285627d17da16daea14dda7e7253e/model.py"
+      ]
+    },
+    {
+      "id": "nanogpt-tiny",
+      "name": "nanoGPT · tiny example",
+      "definition": "NanoGPTTiny",
+      "file": "models/nanogpt.sysml",
+      "scope": "Project-authored teaching configuration; not an upstream release or checkpoint.",
+      "sources": [
+        "https://github.com/karpathy/nanoGPT/blob/f08abb45bd2285627d17da16daea14dda7e7253e/model.py"
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "file": "models/gpt2.sysml",
+      "text": "package GPT2Models {\n    private import ScalarValues::*;\n    private import TransformerLibrary::*;\n    part def GPT2Small :> DecoderOnlyTransformer {\n        doc /* GPT-2 Small logical decoder architecture. Configuration from\n             * openai-community/gpt2; computation checked against OpenAI's\n             * original src/model.py. This is not a loaded checkpoint. */\n        attribute :>> blockCount default = 12;\n        attribute :>> modelWidth default = 768;\n        attribute :>> headCount default = 12;\n        attribute :>> mlpWidth default = 3072;\n        attribute :>> vocabulary default = 50257;\n        attribute :>> contextLength default = 1024;\n        attribute :>> biases default = true;\n        attribute :>> dropout default = 0.1;\n        attribute :>> activation default = \"gelu-tanh-approximation\";\n        attribute :>> tiedEmbeddings default = true;\n    }\n}\n",
+      "digest": "sha256:a7f32db5467e5741539a8015d19e10ae71a708e34790cea0516065e49a38b956"
+    },
+    {
+      "file": "models/library.sysml",
+      "text": "package TransformerLibrary {\n    private import ScalarValues::*;\n    doc /* Logical architecture vocabulary. Tensor shape compatibility,\n         * numerical execution and checkpoint parity are separate checks. */\n    item def Tensor;\n    port def TensorPort { out item value : Tensor; }\n    part def Transform {\n        port input : ~TensorPort;\n        port output : TensorPort;\n    }\n    part def TokenSource { port output : TensorPort; }\n    part def TokenEmbedding :> Transform {\n        attribute weightShape : String default = \"vocabulary,modelWidth\";\n    }\n    part def PositionEmbedding {\n        port output : TensorPort;\n        attribute weightShape : String default = \"contextLength,modelWidth\";\n    }\n    part def Add {\n        port left : ~TensorPort;\n        port right : ~TensorPort;\n        port output : TensorPort;\n    }\n    part def Dropout :> Transform;\n    part def LayerNorm :> Transform {\n        attribute epsilon : Real default = 0.00001;\n    }\n    part def Affine :> Transform;\n    part def AttentionProjection :> Affine {\n        attribute weightShape : String default = \"modelWidth,modelWidth\";\n    }\n    part def MLPExpand :> Affine {\n        attribute weightShape : String default = \"mlpWidth,modelWidth\";\n    }\n    part def MLPContract :> Affine {\n        attribute weightShape : String default = \"modelWidth,mlpWidth\";\n    }\n    part def GELU :> Transform;\n    part def QKVProjection {\n        port input : ~TensorPort;\n        port query : TensorPort;\n        port key : TensorPort;\n        port value : TensorPort;\n        attribute weightShape : String default = \"3*modelWidth,modelWidth\";\n        doc /* Combined learned projection followed by splitting into Q/K/V\n             * and reshaping into headCount heads. Logical axes, not values. */\n    }\n    part def QKProduct {\n        port query : ~TensorPort;\n        port key : ~TensorPort;\n        port output : TensorPort;\n        doc /* Q times transposed K, scaled by sqrt(modelWidth/headCount). */\n    }\n    part def CausalMask :> Transform;\n    part def Softmax :> Transform;\n    part def WeightedValues {\n        port weights : ~TensorPort;\n        port values : ~TensorPort;\n        port output : TensorPort;\n    }\n    part def HeadConcat :> Transform;\n    part def CausalSelfAttention :> Transform {\n        part qkv : QKVProjection;\n        part scores : QKProduct;\n        part mask : CausalMask;\n        part probabilities : Softmax;\n        part mix : WeightedValues;\n        part concatenate : HeadConcat;\n        part projection : AttentionProjection;\n        part dropout : Dropout;\n        bind input = qkv.input;\n        connect qkv.query to scores.query;\n        connect qkv.key to scores.key;\n        connect scores.output to mask.input;\n        connect mask.output to probabilities.input;\n        connect probabilities.output to mix.weights;\n        connect qkv.value to mix.values;\n        connect mix.output to concatenate.input;\n        connect concatenate.output to projection.input;\n        connect projection.output to dropout.input;\n        bind dropout.output = output;\n        doc /* These connections specify tensor dependencies. KV caches and\n             * fused implementation kernels are outside this logical view. */\n    }\n    part def FeedForward :> Transform {\n        part expand : MLPExpand;\n        part activation : GELU;\n        part contract : MLPContract;\n        part dropout : Dropout;\n        bind input = expand.input;\n        connect expand.output to activation.input;\n        connect activation.output to contract.input;\n        connect contract.output to dropout.input;\n        bind dropout.output = output;\n        doc /* Expansion maps modelWidth to mlpWidth; contraction maps back.\n             * The owning model supplies the exact/tanh GELU convention.\n             * Shape compatibility is not yet a native evaluated constraint. */\n    }\n    part def LanguageHead :> Transform {\n        attribute weightShape : String default = \"vocabulary,modelWidth\";\n    }\n    part def PreNormBlock :> Transform {\n        part norm1 : LayerNorm;\n        part attention : CausalSelfAttention;\n        part residual1 : Add;\n        part norm2 : LayerNorm;\n        part mlp : FeedForward;\n        part residual2 : Add;\n        bind input = norm1.input;\n        bind input = residual1.left;\n        connect norm1.output to attention.input;\n        connect attention.output to residual1.right;\n        connect residual1.output to norm2.input;\n        connect residual1.output to residual2.left;\n        connect norm2.output to mlp.input;\n        connect mlp.output to residual2.right;\n        bind residual2.output = output;\n    }\n    part def DecoderStack :> Transform {\n        attribute depth : Integer default = 12;\n        part layers : PreNormBlock[depth] ordered;\n        doc /* Ordered repeated decoder blocks. Serial execution of indexed\n             * layers is described here, not expanded into individual SysML\n             * connections. The viewer shows this as a collapsed stack. */\n    }\n    part def DecoderOnlyTransformer {\n        attribute blockCount : Integer default = 12;\n        attribute modelWidth : Integer default = 768;\n        attribute headCount : Integer default = 12;\n        attribute mlpWidth : Integer default = 3072;\n        attribute vocabulary : Integer default = 50257;\n        attribute contextLength : Integer default = 1024;\n        attribute biases : Boolean default = true;\n        attribute dropout : Real default = 0.0;\n        attribute activation : String default = \"gelu\";\n        attribute tiedEmbeddings : Boolean default = true;\n        part tokens : TokenSource;\n        part tokenEmbedding : TokenEmbedding;\n        part positionEmbedding : PositionEmbedding;\n        part embeddingAdd : Add;\n        part embeddingDropout : Dropout;\n        part decoder : DecoderStack {\n            attribute :>> depth default = blockCount;\n        }\n        part finalNorm : LayerNorm;\n        part lmHead : LanguageHead;\n        connect tokens.output to tokenEmbedding.input;\n        connect tokenEmbedding.output to embeddingAdd.left;\n        connect positionEmbedding.output to embeddingAdd.right;\n        connect embeddingAdd.output to embeddingDropout.input;\n        connect embeddingDropout.output to decoder.input;\n        connect decoder.output to finalNorm.input;\n        connect finalNorm.output to lmHead.input;\n        doc /* tiedEmbeddings records shared token/output weights, not a tensor\n             * data-flow connection. Token and position embeddings are distinct.\n             * Model dimensions describe the whole configuration; this library\n             * does not yet enforce per-port tensor shapes or width constraints. */\n    }\n}\n",
+      "digest": "sha256:259c33d36164d52fc417db574be3a23ab01ee1b1844e926a968df79957a92962"
+    },
+    {
+      "file": "models/nanogpt.sysml",
+      "text": "package NanoGPTModels {\n    private import ScalarValues::*;\n    private import TransformerLibrary::*;\n    part def NanoGPTDefault :> DecoderOnlyTransformer {\n        doc /* Defaults of the GPTConfig dataclass in karpathy/nanoGPT/model.py,\n             * not train.py overrides and not a particular trained model.\n             * PyTorch nn.GELU uses its default exact formulation here. */\n        attribute :>> blockCount default = 12;\n        attribute :>> modelWidth default = 768;\n        attribute :>> headCount default = 12;\n        attribute :>> mlpWidth default = 3072;\n        attribute :>> vocabulary default = 50304;\n        attribute :>> contextLength default = 1024;\n        attribute :>> biases default = true;\n        attribute :>> dropout default = 0.0;\n        attribute :>> activation default = \"gelu-exact\";\n        attribute :>> tiedEmbeddings default = true;\n    }\n    part def NanoGPTTiny :> NanoGPTDefault {\n        doc /* Project-authored teaching configuration of the same architecture.\n             * These are our chosen dimensions, not an upstream model release. */\n        attribute :>> blockCount default = 4;\n        attribute :>> modelWidth default = 128;\n        attribute :>> headCount default = 4;\n        attribute :>> mlpWidth default = 512;\n        attribute :>> vocabulary default = 256;\n        attribute :>> contextLength default = 128;\n    }\n}\n",
+      "digest": "sha256:0a7ab18f83b6bf2fdb24b7afb9b4d23d16127ad97883633dfe5f54753f74c2c3"
+    }
+  ],
+  "definitions": {
+    "GPT2Small": {
+      "name": "GPT2Small",
+      "parent": "DecoderOnlyTransformer",
+      "file": "models/gpt2.sysml",
+      "startLine": 4,
+      "endLine": 18,
+      "attributes": {
+        "blockCount": 12,
+        "modelWidth": 768,
+        "headCount": 12,
+        "mlpWidth": 3072,
+        "vocabulary": 50257,
+        "contextLength": 1024,
+        "biases": true,
+        "dropout": 0.1,
+        "activation": "gelu-tanh-approximation",
+        "tiedEmbeddings": true
+      },
+      "parts": [],
+      "ports": [],
+      "connections": [],
+      "bindings": [],
+      "source": "    part def GPT2Small :> DecoderOnlyTransformer {\n        doc /* GPT-2 Small logical decoder architecture. Configuration from\n             * openai-community/gpt2; computation checked against OpenAI's\n             * original src/model.py. This is not a loaded checkpoint. */\n        attribute :>> blockCount default = 12;\n        attribute :>> modelWidth default = 768;\n        attribute :>> headCount default = 12;\n        attribute :>> mlpWidth default = 3072;\n        attribute :>> vocabulary default = 50257;\n        attribute :>> contextLength default = 1024;\n        attribute :>> biases default = true;\n        attribute :>> dropout default = 0.1;\n        attribute :>> activation default = \"gelu-tanh-approximation\";\n        attribute :>> tiedEmbeddings default = true;\n    }"
+    },
+    "Transform": {
+      "name": "Transform",
+      "parent": null,
+      "file": "models/library.sysml",
+      "startLine": 7,
+      "endLine": 10,
+      "attributes": {},
+      "parts": [],
+      "ports": [
+        {
+          "name": "input",
+          "conjugated": true,
+          "type": "TensorPort"
+        },
+        {
+          "name": "output",
+          "conjugated": false,
+          "type": "TensorPort"
+        }
+      ],
+      "connections": [],
+      "bindings": [],
+      "source": "    part def Transform {\n        port input : ~TensorPort;\n        port output : TensorPort;\n    }"
+    },
+    "TokenSource": {
+      "name": "TokenSource",
+      "parent": null,
+      "file": "models/library.sysml",
+      "startLine": 11,
+      "endLine": 11,
+      "attributes": {},
+      "parts": [],
+      "ports": [
+        {
+          "name": "output",
+          "conjugated": false,
+          "type": "TensorPort"
+        }
+      ],
+      "connections": [],
+      "bindings": [],
+      "source": "    part def TokenSource { port output : TensorPort; }"
+    },
+    "TokenEmbedding": {
+      "name": "TokenEmbedding",
+      "parent": "Transform",
+      "file": "models/library.sysml",
+      "startLine": 12,
+      "endLine": 14,
+      "attributes": {
+        "weightShape": "vocabulary,modelWidth"
+      },
+      "parts": [],
+      "ports": [],
+      "connections": [],
+      "bindings": [],
+      "source": "    part def TokenEmbedding :> Transform {\n        attribute weightShape : String default = \"vocabulary,modelWidth\";\n    }"
+    },
+    "PositionEmbedding": {
+      "name": "PositionEmbedding",
+      "parent": null,
+      "file": "models/library.sysml",
+      "startLine": 15,
+      "endLine": 18,
+      "attributes": {
+        "weightShape": "contextLength,modelWidth"
+      },
+      "parts": [],
+      "ports": [
+        {
+          "name": "output",
+          "conjugated": false,
+          "type": "TensorPort"
+        }
+      ],
+      "connections": [],
+      "bindings": [],
+      "source": "    part def PositionEmbedding {\n        port output : TensorPort;\n        attribute weightShape : String default = \"contextLength,modelWidth\";\n    }"
+    },
+    "Add": {
+      "name": "Add",
+      "parent": null,
+      "file": "models/library.sysml",
+      "startLine": 19,
+      "endLine": 23,
+      "attributes": {},
+      "parts": [],
+      "ports": [
+        {
+          "name": "left",
+          "conjugated": true,
+          "type": "TensorPort"
+        },
+        {
+          "name": "right",
+          "conjugated": true,
+          "type": "TensorPort"
+        },
+        {
+          "name": "output",
+          "conjugated": false,
+          "type": "TensorPort"
+        }
+      ],
+      "connections": [],
+      "bindings": [],
+      "source": "    part def Add {\n        port left : ~TensorPort;\n        port right : ~TensorPort;\n        port output : TensorPort;\n    }"
+    },
+    "Dropout": {
+      "name": "Dropout",
+      "parent": "Transform",
+      "file": "models/library.sysml",
+      "startLine": 24,
+      "endLine": 24,
+      "attributes": {},
+      "parts": [],
+      "ports": [],
+      "connections": [],
+      "bindings": [],
+      "source": "    part def Dropout :> Transform;"
+    },
+    "LayerNorm": {
+      "name": "LayerNorm",
+      "parent": "Transform",
+      "file": "models/library.sysml",
+      "startLine": 25,
+      "endLine": 27,
+      "attributes": {
+        "epsilon": 0.00001
+      },
+      "parts": [],
+      "ports": [],
+      "connections": [],
+      "bindings": [],
+      "source": "    part def LayerNorm :> Transform {\n        attribute epsilon : Real default = 0.00001;\n    }"
+    },
+    "Affine": {
+      "name": "Affine",
+      "parent": "Transform",
+      "file": "models/library.sysml",
+      "startLine": 28,
+      "endLine": 28,
+      "attributes": {},
+      "parts": [],
+      "ports": [],
+      "connections": [],
+      "bindings": [],
+      "source": "    part def Affine :> Transform;"
+    },
+    "AttentionProjection": {
+      "name": "AttentionProjection",
+      "parent": "Affine",
+      "file": "models/library.sysml",
+      "startLine": 29,
+      "endLine": 31,
+      "attributes": {
+        "weightShape": "modelWidth,modelWidth"
+      },
+      "parts": [],
+      "ports": [],
+      "connections": [],
+      "bindings": [],
+      "source": "    part def AttentionProjection :> Affine {\n        attribute weightShape : String default = \"modelWidth,modelWidth\";\n    }"
+    },
+    "MLPExpand": {
+      "name": "MLPExpand",
+      "parent": "Affine",
+      "file": "models/library.sysml",
+      "startLine": 32,
+      "endLine": 34,
+      "attributes": {
+        "weightShape": "mlpWidth,modelWidth"
+      },
+      "parts": [],
+      "ports": [],
+      "connections": [],
+      "bindings": [],
+      "source": "    part def MLPExpand :> Affine {\n        attribute weightShape : String default = \"mlpWidth,modelWidth\";\n    }"
+    },
+    "MLPContract": {
+      "name": "MLPContract",
+      "parent": "Affine",
+      "file": "models/library.sysml",
+      "startLine": 35,
+      "endLine": 37,
+      "attributes": {
+        "weightShape": "modelWidth,mlpWidth"
+      },
+      "parts": [],
+      "ports": [],
+      "connections": [],
+      "bindings": [],
+      "source": "    part def MLPContract :> Affine {\n        attribute weightShape : String default = \"modelWidth,mlpWidth\";\n    }"
+    },
+    "GELU": {
+      "name": "GELU",
+      "parent": "Transform",
+      "file": "models/library.sysml",
+      "startLine": 38,
+      "endLine": 38,
+      "attributes": {},
+      "parts": [],
+      "ports": [],
+      "connections": [],
+      "bindings": [],
+      "source": "    part def GELU :> Transform;"
+    },
+    "QKVProjection": {
+      "name": "QKVProjection",
+      "parent": null,
+      "file": "models/library.sysml",
+      "startLine": 39,
+      "endLine": 47,
+      "attributes": {
+        "weightShape": "3*modelWidth,modelWidth"
+      },
+      "parts": [],
+      "ports": [
+        {
+          "name": "input",
+          "conjugated": true,
+          "type": "TensorPort"
+        },
+        {
+          "name": "query",
+          "conjugated": false,
+          "type": "TensorPort"
+        },
+        {
+          "name": "key",
+          "conjugated": false,
+          "type": "TensorPort"
+        },
+        {
+          "name": "value",
+          "conjugated": false,
+          "type": "TensorPort"
+        }
+      ],
+      "connections": [],
+      "bindings": [],
+      "source": "    part def QKVProjection {\n        port input : ~TensorPort;\n        port query : TensorPort;\n        port key : TensorPort;\n        port value : TensorPort;\n        attribute weightShape : String default = \"3*modelWidth,modelWidth\";\n        doc /* Combined learned projection followed by splitting into Q/K/V\n             * and reshaping into headCount heads. Logical axes, not values. */\n    }"
+    },
+    "QKProduct": {
+      "name": "QKProduct",
+      "parent": null,
+      "file": "models/library.sysml",
+      "startLine": 48,
+      "endLine": 53,
+      "attributes": {},
+      "parts": [],
+      "ports": [
+        {
+          "name": "query",
+          "conjugated": true,
+          "type": "TensorPort"
+        },
+        {
+          "name": "key",
+          "conjugated": true,
+          "type": "TensorPort"
+        },
+        {
+          "name": "output",
+          "conjugated": false,
+          "type": "TensorPort"
+        }
+      ],
+      "connections": [],
+      "bindings": [],
+      "source": "    part def QKProduct {\n        port query : ~TensorPort;\n        port key : ~TensorPort;\n        port output : TensorPort;\n        doc /* Q times transposed K, scaled by sqrt(modelWidth/headCount). */\n    }"
+    },
+    "CausalMask": {
+      "name": "CausalMask",
+      "parent": "Transform",
+      "file": "models/library.sysml",
+      "startLine": 54,
+      "endLine": 54,
+      "attributes": {},
+      "parts": [],
+      "ports": [],
+      "connections": [],
+      "bindings": [],
+      "source": "    part def CausalMask :> Transform;"
+    },
+    "Softmax": {
+      "name": "Softmax",
+      "parent": "Transform",
+      "file": "models/library.sysml",
+      "startLine": 55,
+      "endLine": 55,
+      "attributes": {},
+      "parts": [],
+      "ports": [],
+      "connections": [],
+      "bindings": [],
+      "source": "    part def Softmax :> Transform;"
+    },
+    "WeightedValues": {
+      "name": "WeightedValues",
+      "parent": null,
+      "file": "models/library.sysml",
+      "startLine": 56,
+      "endLine": 60,
+      "attributes": {},
+      "parts": [],
+      "ports": [
+        {
+          "name": "weights",
+          "conjugated": true,
+          "type": "TensorPort"
+        },
+        {
+          "name": "values",
+          "conjugated": true,
+          "type": "TensorPort"
+        },
+        {
+          "name": "output",
+          "conjugated": false,
+          "type": "TensorPort"
+        }
+      ],
+      "connections": [],
+      "bindings": [],
+      "source": "    part def WeightedValues {\n        port weights : ~TensorPort;\n        port values : ~TensorPort;\n        port output : TensorPort;\n    }"
+    },
+    "HeadConcat": {
+      "name": "HeadConcat",
+      "parent": "Transform",
+      "file": "models/library.sysml",
+      "startLine": 61,
+      "endLine": 61,
+      "attributes": {},
+      "parts": [],
+      "ports": [],
+      "connections": [],
+      "bindings": [],
+      "source": "    part def HeadConcat :> Transform;"
+    },
+    "CausalSelfAttention": {
+      "name": "CausalSelfAttention",
+      "parent": "Transform",
+      "file": "models/library.sysml",
+      "startLine": 62,
+      "endLine": 84,
+      "attributes": {},
+      "parts": [
+        {
+          "name": "qkv",
+          "type": "QKVProjection",
+          "multiplicity": "1"
+        },
+        {
+          "name": "scores",
+          "type": "QKProduct",
+          "multiplicity": "1"
+        },
+        {
+          "name": "mask",
+          "type": "CausalMask",
+          "multiplicity": "1"
+        },
+        {
+          "name": "probabilities",
+          "type": "Softmax",
+          "multiplicity": "1"
+        },
+        {
+          "name": "mix",
+          "type": "WeightedValues",
+          "multiplicity": "1"
+        },
+        {
+          "name": "concatenate",
+          "type": "HeadConcat",
+          "multiplicity": "1"
+        },
+        {
+          "name": "projection",
+          "type": "AttentionProjection",
+          "multiplicity": "1"
+        },
+        {
+          "name": "dropout",
+          "type": "Dropout",
+          "multiplicity": "1"
+        }
+      ],
+      "ports": [],
+      "connections": [
+        {
+          "source": "qkv",
+          "sourcePort": "query",
+          "target": "scores",
+          "targetPort": "query"
+        },
+        {
+          "source": "qkv",
+          "sourcePort": "key",
+          "target": "scores",
+          "targetPort": "key"
+        },
+        {
+          "source": "scores",
+          "sourcePort": "output",
+          "target": "mask",
+          "targetPort": "input"
+        },
+        {
+          "source": "mask",
+          "sourcePort": "output",
+          "target": "probabilities",
+          "targetPort": "input"
+        },
+        {
+          "source": "probabilities",
+          "sourcePort": "output",
+          "target": "mix",
+          "targetPort": "weights"
+        },
+        {
+          "source": "qkv",
+          "sourcePort": "value",
+          "target": "mix",
+          "targetPort": "values"
+        },
+        {
+          "source": "mix",
+          "sourcePort": "output",
+          "target": "concatenate",
+          "targetPort": "input"
+        },
+        {
+          "source": "concatenate",
+          "sourcePort": "output",
+          "target": "projection",
+          "targetPort": "input"
+        },
+        {
+          "source": "projection",
+          "sourcePort": "output",
+          "target": "dropout",
+          "targetPort": "input"
+        }
+      ],
+      "bindings": [
+        {
+          "source": "input",
+          "target": "qkv.input"
+        },
+        {
+          "source": "dropout.output",
+          "target": "output"
+        }
+      ],
+      "source": "    part def CausalSelfAttention :> Transform {\n        part qkv : QKVProjection;\n        part scores : QKProduct;\n        part mask : CausalMask;\n        part probabilities : Softmax;\n        part mix : WeightedValues;\n        part concatenate : HeadConcat;\n        part projection : AttentionProjection;\n        part dropout : Dropout;\n        bind input = qkv.input;\n        connect qkv.query to scores.query;\n        connect qkv.key to scores.key;\n        connect scores.output to mask.input;\n        connect mask.output to probabilities.input;\n        connect probabilities.output to mix.weights;\n        connect qkv.value to mix.values;\n        connect mix.output to concatenate.input;\n        connect concatenate.output to projection.input;\n        connect projection.output to dropout.input;\n        bind dropout.output = output;\n        doc /* These connections specify tensor dependencies. KV caches and\n             * fused implementation kernels are outside this logical view. */\n    }"
+    },
+    "FeedForward": {
+      "name": "FeedForward",
+      "parent": "Transform",
+      "file": "models/library.sysml",
+      "startLine": 85,
+      "endLine": 98,
+      "attributes": {},
+      "parts": [
+        {
+          "name": "expand",
+          "type": "MLPExpand",
+          "multiplicity": "1"
+        },
+        {
+          "name": "activation",
+          "type": "GELU",
+          "multiplicity": "1"
+        },
+        {
+          "name": "contract",
+          "type": "MLPContract",
+          "multiplicity": "1"
+        },
+        {
+          "name": "dropout",
+          "type": "Dropout",
+          "multiplicity": "1"
+        }
+      ],
+      "ports": [],
+      "connections": [
+        {
+          "source": "expand",
+          "sourcePort": "output",
+          "target": "activation",
+          "targetPort": "input"
+        },
+        {
+          "source": "activation",
+          "sourcePort": "output",
+          "target": "contract",
+          "targetPort": "input"
+        },
+        {
+          "source": "contract",
+          "sourcePort": "output",
+          "target": "dropout",
+          "targetPort": "input"
+        }
+      ],
+      "bindings": [
+        {
+          "source": "input",
+          "target": "expand.input"
+        },
+        {
+          "source": "dropout.output",
+          "target": "output"
+        }
+      ],
+      "source": "    part def FeedForward :> Transform {\n        part expand : MLPExpand;\n        part activation : GELU;\n        part contract : MLPContract;\n        part dropout : Dropout;\n        bind input = expand.input;\n        connect expand.output to activation.input;\n        connect activation.output to contract.input;\n        connect contract.output to dropout.input;\n        bind dropout.output = output;\n        doc /* Expansion maps modelWidth to mlpWidth; contraction maps back.\n             * The owning model supplies the exact/tanh GELU convention.\n             * Shape compatibility is not yet a native evaluated constraint. */\n    }"
+    },
+    "LanguageHead": {
+      "name": "LanguageHead",
+      "parent": "Transform",
+      "file": "models/library.sysml",
+      "startLine": 99,
+      "endLine": 101,
+      "attributes": {
+        "weightShape": "vocabulary,modelWidth"
+      },
+      "parts": [],
+      "ports": [],
+      "connections": [],
+      "bindings": [],
+      "source": "    part def LanguageHead :> Transform {\n        attribute weightShape : String default = \"vocabulary,modelWidth\";\n    }"
+    },
+    "PreNormBlock": {
+      "name": "PreNormBlock",
+      "parent": "Transform",
+      "file": "models/library.sysml",
+      "startLine": 102,
+      "endLine": 118,
+      "attributes": {},
+      "parts": [
+        {
+          "name": "norm1",
+          "type": "LayerNorm",
+          "multiplicity": "1"
+        },
+        {
+          "name": "attention",
+          "type": "CausalSelfAttention",
+          "multiplicity": "1"
+        },
+        {
+          "name": "residual1",
+          "type": "Add",
+          "multiplicity": "1"
+        },
+        {
+          "name": "norm2",
+          "type": "LayerNorm",
+          "multiplicity": "1"
+        },
+        {
+          "name": "mlp",
+          "type": "FeedForward",
+          "multiplicity": "1"
+        },
+        {
+          "name": "residual2",
+          "type": "Add",
+          "multiplicity": "1"
+        }
+      ],
+      "ports": [],
+      "connections": [
+        {
+          "source": "norm1",
+          "sourcePort": "output",
+          "target": "attention",
+          "targetPort": "input"
+        },
+        {
+          "source": "attention",
+          "sourcePort": "output",
+          "target": "residual1",
+          "targetPort": "right"
+        },
+        {
+          "source": "residual1",
+          "sourcePort": "output",
+          "target": "norm2",
+          "targetPort": "input"
+        },
+        {
+          "source": "residual1",
+          "sourcePort": "output",
+          "target": "residual2",
+          "targetPort": "left"
+        },
+        {
+          "source": "norm2",
+          "sourcePort": "output",
+          "target": "mlp",
+          "targetPort": "input"
+        },
+        {
+          "source": "mlp",
+          "sourcePort": "output",
+          "target": "residual2",
+          "targetPort": "right"
+        }
+      ],
+      "bindings": [
+        {
+          "source": "input",
+          "target": "norm1.input"
+        },
+        {
+          "source": "input",
+          "target": "residual1.left"
+        },
+        {
+          "source": "residual2.output",
+          "target": "output"
+        }
+      ],
+      "source": "    part def PreNormBlock :> Transform {\n        part norm1 : LayerNorm;\n        part attention : CausalSelfAttention;\n        part residual1 : Add;\n        part norm2 : LayerNorm;\n        part mlp : FeedForward;\n        part residual2 : Add;\n        bind input = norm1.input;\n        bind input = residual1.left;\n        connect norm1.output to attention.input;\n        connect attention.output to residual1.right;\n        connect residual1.output to norm2.input;\n        connect residual1.output to residual2.left;\n        connect norm2.output to mlp.input;\n        connect mlp.output to residual2.right;\n        bind residual2.output = output;\n    }"
+    },
+    "DecoderStack": {
+      "name": "DecoderStack",
+      "parent": "Transform",
+      "file": "models/library.sysml",
+      "startLine": 119,
+      "endLine": 125,
+      "attributes": {
+        "depth": 12
+      },
+      "parts": [
+        {
+          "name": "layers",
+          "type": "PreNormBlock",
+          "multiplicity": "depth"
+        }
+      ],
+      "ports": [],
+      "connections": [],
+      "bindings": [],
+      "source": "    part def DecoderStack :> Transform {\n        attribute depth : Integer default = 12;\n        part layers : PreNormBlock[depth] ordered;\n        doc /* Ordered repeated decoder blocks. Serial execution of indexed\n             * layers is described here, not expanded into individual SysML\n             * connections. The viewer shows this as a collapsed stack. */\n    }"
+    },
+    "DecoderOnlyTransformer": {
+      "name": "DecoderOnlyTransformer",
+      "parent": null,
+      "file": "models/library.sysml",
+      "startLine": 126,
+      "endLine": 158,
+      "attributes": {
+        "blockCount": 12,
+        "modelWidth": 768,
+        "headCount": 12,
+        "mlpWidth": 3072,
+        "vocabulary": 50257,
+        "contextLength": 1024,
+        "biases": true,
+        "dropout": 0,
+        "activation": "gelu",
+        "tiedEmbeddings": true
+      },
+      "parts": [
+        {
+          "name": "tokens",
+          "type": "TokenSource",
+          "multiplicity": "1"
+        },
+        {
+          "name": "tokenEmbedding",
+          "type": "TokenEmbedding",
+          "multiplicity": "1"
+        },
+        {
+          "name": "positionEmbedding",
+          "type": "PositionEmbedding",
+          "multiplicity": "1"
+        },
+        {
+          "name": "embeddingAdd",
+          "type": "Add",
+          "multiplicity": "1"
+        },
+        {
+          "name": "embeddingDropout",
+          "type": "Dropout",
+          "multiplicity": "1"
+        },
+        {
+          "name": "decoder",
+          "type": "DecoderStack",
+          "multiplicity": "1"
+        },
+        {
+          "name": "finalNorm",
+          "type": "LayerNorm",
+          "multiplicity": "1"
+        },
+        {
+          "name": "lmHead",
+          "type": "LanguageHead",
+          "multiplicity": "1"
+        }
+      ],
+      "ports": [],
+      "connections": [
+        {
+          "source": "tokens",
+          "sourcePort": "output",
+          "target": "tokenEmbedding",
+          "targetPort": "input"
+        },
+        {
+          "source": "tokenEmbedding",
+          "sourcePort": "output",
+          "target": "embeddingAdd",
+          "targetPort": "left"
+        },
+        {
+          "source": "positionEmbedding",
+          "sourcePort": "output",
+          "target": "embeddingAdd",
+          "targetPort": "right"
+        },
+        {
+          "source": "embeddingAdd",
+          "sourcePort": "output",
+          "target": "embeddingDropout",
+          "targetPort": "input"
+        },
+        {
+          "source": "embeddingDropout",
+          "sourcePort": "output",
+          "target": "decoder",
+          "targetPort": "input"
+        },
+        {
+          "source": "decoder",
+          "sourcePort": "output",
+          "target": "finalNorm",
+          "targetPort": "input"
+        },
+        {
+          "source": "finalNorm",
+          "sourcePort": "output",
+          "target": "lmHead",
+          "targetPort": "input"
+        }
+      ],
+      "bindings": [],
+      "source": "    part def DecoderOnlyTransformer {\n        attribute blockCount : Integer default = 12;\n        attribute modelWidth : Integer default = 768;\n        attribute headCount : Integer default = 12;\n        attribute mlpWidth : Integer default = 3072;\n        attribute vocabulary : Integer default = 50257;\n        attribute contextLength : Integer default = 1024;\n        attribute biases : Boolean default = true;\n        attribute dropout : Real default = 0.0;\n        attribute activation : String default = \"gelu\";\n        attribute tiedEmbeddings : Boolean default = true;\n        part tokens : TokenSource;\n        part tokenEmbedding : TokenEmbedding;\n        part positionEmbedding : PositionEmbedding;\n        part embeddingAdd : Add;\n        part embeddingDropout : Dropout;\n        part decoder : DecoderStack {\n            attribute :>> depth default = blockCount;\n        }\n        part finalNorm : LayerNorm;\n        part lmHead : LanguageHead;\n        connect tokens.output to tokenEmbedding.input;\n        connect tokenEmbedding.output to embeddingAdd.left;\n        connect positionEmbedding.output to embeddingAdd.right;\n        connect embeddingAdd.output to embeddingDropout.input;\n        connect embeddingDropout.output to decoder.input;\n        connect decoder.output to finalNorm.input;\n        connect finalNorm.output to lmHead.input;\n        doc /* tiedEmbeddings records shared token/output weights, not a tensor\n             * data-flow connection. Token and position embeddings are distinct.\n             * Model dimensions describe the whole configuration; this library\n             * does not yet enforce per-port tensor shapes or width constraints. */\n    }"
+    },
+    "NanoGPTDefault": {
+      "name": "NanoGPTDefault",
+      "parent": "DecoderOnlyTransformer",
+      "file": "models/nanogpt.sysml",
+      "startLine": 4,
+      "endLine": 18,
+      "attributes": {
+        "blockCount": 12,
+        "modelWidth": 768,
+        "headCount": 12,
+        "mlpWidth": 3072,
+        "vocabulary": 50304,
+        "contextLength": 1024,
+        "biases": true,
+        "dropout": 0,
+        "activation": "gelu-exact",
+        "tiedEmbeddings": true
+      },
+      "parts": [],
+      "ports": [],
+      "connections": [],
+      "bindings": [],
+      "source": "    part def NanoGPTDefault :> DecoderOnlyTransformer {\n        doc /* Defaults of the GPTConfig dataclass in karpathy/nanoGPT/model.py,\n             * not train.py overrides and not a particular trained model.\n             * PyTorch nn.GELU uses its default exact formulation here. */\n        attribute :>> blockCount default = 12;\n        attribute :>> modelWidth default = 768;\n        attribute :>> headCount default = 12;\n        attribute :>> mlpWidth default = 3072;\n        attribute :>> vocabulary default = 50304;\n        attribute :>> contextLength default = 1024;\n        attribute :>> biases default = true;\n        attribute :>> dropout default = 0.0;\n        attribute :>> activation default = \"gelu-exact\";\n        attribute :>> tiedEmbeddings default = true;\n    }"
+    },
+    "NanoGPTTiny": {
+      "name": "NanoGPTTiny",
+      "parent": "NanoGPTDefault",
+      "file": "models/nanogpt.sysml",
+      "startLine": 19,
+      "endLine": 28,
+      "attributes": {
+        "blockCount": 4,
+        "modelWidth": 128,
+        "headCount": 4,
+        "mlpWidth": 512,
+        "vocabulary": 256,
+        "contextLength": 128
+      },
+      "parts": [],
+      "ports": [],
+      "connections": [],
+      "bindings": [],
+      "source": "    part def NanoGPTTiny :> NanoGPTDefault {\n        doc /* Project-authored teaching configuration of the same architecture.\n             * These are our chosen dimensions, not an upstream model release. */\n        attribute :>> blockCount default = 4;\n        attribute :>> modelWidth default = 128;\n        attribute :>> headCount default = 4;\n        attribute :>> mlpWidth default = 512;\n        attribute :>> vocabulary default = 256;\n        attribute :>> contextLength default = 128;\n    }"
+    }
+  },
+  "validation": {
+    "engineDigest": "sha256:c3cc160b16f3e035033617017209f3c740c6881dac2bc0af78240d4306d83a50",
+    "output": "✓ package GPT2Models\n✓ package TransformerLibrary\n✓ package NanoGPTModels\n✓ /home/rohan/Documents/Github/work/personal/sysmlv2_transformers/models/gpt2.sysml, /home/rohan/Documents/Github/work/personal/sysmlv2_transformers/models/library.sysml, /home/rohan/Documents/Github/work/personal/sysmlv2_transformers/models/nanogpt.sysml: no errors\n"
+  }
+}

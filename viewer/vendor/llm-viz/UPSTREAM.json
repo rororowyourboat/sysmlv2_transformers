@@ -1,0 +1,45 @@
+{
+  "repository": "https://github.com/bbycroft/llm-viz",
+  "commit": "9da93742382f1bf36c020c38a1ace454e82c4490",
+  "license": "MIT",
+  "copyright": "Copyright (c) 2023-2026 Brendan Bycroft",
+  "files": [
+    {
+      "path": "src/utils/vector.ts",
+      "retained": "upstream/vector.ts",
+      "sha256": "0115cf2c953821118abfac384b882b123024f0a19ec4989ac0c027fb5b78f729"
+    },
+    {
+      "path": "src/utils/matrix.ts",
+      "retained": "upstream/matrix.ts",
+      "sha256": "2b4fa84a1afaedbddae9c8f1cb718a611e4663cbaa9338ebe63aac0650a8da2f"
+    },
+    {
+      "path": "src/utils/shader.ts",
+      "retained": "upstream/shader.ts",
+      "sha256": "942dfb895b0073ae42665fe327dde54eddae42e1a916701be36844871b0c2948"
+    },
+    {
+      "path": "src/llm/render/sharedRender.ts",
+      "retained": "upstream/sharedRender.ts",
+      "sha256": "29e6d0ecc0911c632014cbe4a62188061ff5d14d22e5a2cc86d2fff38af67a93"
+    },
+    {
+      "path": "src/llm/render/blockRender.ts",
+      "retained": "upstream/blockRender.ts",
+      "sha256": "2f1eb08e35d6a45d0bd9682e25dcfa067df3ed23b3e6dd201e38452dcbd1c5cb"
+    },
+    {
+      "path": "src/llm/GptModelLayout.ts",
+      "retained": "upstream/GptModelLayout.ts",
+      "sha256": "63e82f90d0ee7f5dc4cf8ed64ba12f1eac7fc79010f3b3e004348123b0261fb6"
+    }
+  ],
+  "generation": "node scripts/vendor-bycroft.mjs",
+  "changes": [
+    "TypeScript transformed to browser JavaScript using Node 24.",
+    "Imports narrowed to the runtime subset; Colors and DimStyle constants retained from WalkthroughTools; roundUpTo, isNil and dimProps compatibility helpers supplied.",
+    "Node __filename checks replaced with literal source filenames.",
+    "Renderer algorithms and shaders retained; application lifecycle, source mapping, camera, labels, compact layout and viewport remain project code."
+  ]
+}

@@ -1,0 +1,23 @@
+[
+  {
+    "repository": "karpathy/nanoGPT",
+    "revision": "f08abb45bd2285627d17da16daea14dda7e7253e",
+    "path": "model.py",
+    "url": "https://github.com/karpathy/nanoGPT/blob/f08abb45bd2285627d17da16daea14dda7e7253e/model.py",
+    "sha256": "7c01703240dbec5d554527dc666e35b3df8391d0b117fddc07afcf325a21d11c"
+  },
+  {
+    "repository": "openai/gpt-2",
+    "revision": "c2dae27c1029770cea40978813f17a5fd545b883",
+    "path": "src/model.py",
+    "url": "https://github.com/openai/gpt-2/blob/c2dae27c1029770cea40978813f17a5fd545b883/src/model.py",
+    "sha256": "2ff5065f5cac3dc93065f8a3f36eb013e407972a80abcd4ee6b89a7138a0d5a6"
+  },
+  {
+    "repository": "openai-community/gpt2",
+    "revision": "607a30d783dfa663caf39e06633721c8d4cfcd7e",
+    "path": "config.json",
+    "url": "https://huggingface.co/openai-community/gpt2/blob/607a30d783dfa663caf39e06633721c8d4cfcd7e/config.json",
+    "sha256": "0daed7749b4f02b8f76240d5444551d7b08712dab4d0adb8239c56ba823bb7b4"
+  }
+]

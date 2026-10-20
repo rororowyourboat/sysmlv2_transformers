@@ -1,0 +1,33 @@
+[
+  {
+    "id": "gpt2-small",
+    "name": "GPT-2 Small",
+    "definition": "GPT2Small",
+    "file": "models/gpt2.sysml",
+    "scope": "Released architecture configuration; no weights loaded.",
+    "sources": [
+      "https://github.com/openai/gpt-2/blob/c2dae27c1029770cea40978813f17a5fd545b883/src/model.py",
+      "https://huggingface.co/openai-community/gpt2/blob/607a30d783dfa663caf39e06633721c8d4cfcd7e/config.json"
+    ]
+  },
+  {
+    "id": "nanogpt-default",
+    "name": "nanoGPT \u00b7 default",
+    "definition": "NanoGPTDefault",
+    "file": "models/nanogpt.sysml",
+    "scope": "GPTConfig defaults from model.py, distinct from training-script overrides.",
+    "sources": [
+      "https://github.com/karpathy/nanoGPT/blob/f08abb45bd2285627d17da16daea14dda7e7253e/model.py"
+    ]
+  },
+  {
+    "id": "nanogpt-tiny",
+    "name": "nanoGPT \u00b7 tiny example",
+    "definition": "NanoGPTTiny",
+    "file": "models/nanogpt.sysml",
+    "scope": "Project-authored teaching configuration; not an upstream release or checkpoint.",
+    "sources": [
+      "https://github.com/karpathy/nanoGPT/blob/f08abb45bd2285627d17da16daea14dda7e7253e/model.py"
+    ]
+  }
+]
